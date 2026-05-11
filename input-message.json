@@ -5,19 +5,18 @@
   "persistDataId": "",
   "entityId": "f93b7028-2838-4e44-9e58-975ad6d65b21",
   "type": "Agent",
-  "entityName": "Calculator Agent",
+  "entityName": "Lens",
   "entityUrl": "http://localhost:9996",
   "entityConfig": {
-    "skillId": "calculator_skill",
-    "inputs": {
-      "user_query": "What is 12 times 9 minus 15?"
-    }
+    "skillId": "lens_tc_decompose_skill",
+    "chatInput": "Decompose uploaded automation test cases workbook.",
+    "inputs": {}
   },
   "experienceBlueprints": [
     {
       "experienceBlueprintId": "01987a49-ee09-7558-8152-3783e28c3660",
       "blueprint": {
-        "name": "Calculator blueprint",
+        "name": "Lens blueprint",
         "bluePrintServices": {
           "llm": {
             "provider": "azure_openai",
