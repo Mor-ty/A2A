@@ -1,0 +1,39 @@
+{
+  "id": "4",
+  "remoteContextId": "",
+  "taskId": "",
+  "persistDataId": "",
+  "entityId": "f93b7028-2838-4e44-9e58-975ad6d65b21",
+  "type": "Agent",
+  "entityName": "Calculator Agent",
+  "entityUrl": "http://localhost:9996",
+  "entityConfig": {
+    "skillId": "calculator_skill",
+    "inputs": {
+      "user_query": "What is 17 plus 25, then multiply that sum by 2?"
+    }
+  },
+  "experienceBlueprints": [
+    {
+      "experienceBlueprintId": "01987a49-ee09-7558-8152-3783e28c3660",
+      "blueprint": {
+        "name": "Calculator blueprint",
+        "bluePrintServices": {
+          "llm": {
+            "provider": "azure_openai",
+            "azure_openai": {
+              "endpoint": "https://dev-agentic.openai.azure.com/",
+              "deployment_name": "gpt-5.4",
+              "api_version": "2024-12-01-preview",
+              "temperature": 0.1,
+              "max_tokens": 100000,
+              "reasoning_effort": "high",
+              "model_name": "gpt-5.4"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "description": "Configuration"
+}

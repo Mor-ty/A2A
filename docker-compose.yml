@@ -1,0 +1,37 @@
+version: '3' #example only, will be used as reference for infra devops teams with your values
+services:
+
+  agent_template:
+    image: agent_template:latest
+    container_name: agent_template
+    ports:
+     # - "port:port" # Uncomment and set the port if your application listens on a specific port
+    network_mode: "bridge"  # This is default anyway
+    environment:
+      PORT: "port"
+      UVICORN_WORKERS: "1"
+      ENV_TYPE: "dev"
+      AWS_PROFILE: "default"
+      AWS_DEFAULT_REGION: "eu-west-1"
+      AWS_CONFIG_FILE: "/home/aqernt/.aws/config"  # Point to standard location
+      #AZURE_OPENAI_API_KEY: "#########" #this valuse should not be pushed to git, should be set in env variable in the host machine
+      NO_PROXY: "agenticservices-dev,localhost,127.0.0.1,illin4436"
+      no_proxy: "agenticservices-dev,localhost,127.0.0.1,.amdocs.com,illin4436"
+      HOST_NAME: "illin4436"
+      IMPORT_USER: "App_AQEBrain_DEV"
+      #IMPORT_PASSWORD: "#########" #this valuse should not be pushed to git, should be set in env variable in the host machine
+      APP_NAME: "agentic-qube"
+      LOG_LEVEL: "INFO"
+      LOG_FILE_PATH: "./Logs/app.log"
+      LOG_ROTATE_MAX_BYTES: "10485760"
+      LOG_ROTATE_BACKUP_COUNT: "5"
+      RABBITMQ_HOSTS: "illin4436:5672"
+      RABBITMQ_USER: "guest"
+      RABBITMQ_PASS: "guest"
+      RABBITMQ_HOST: "illin4436"
+      RABBITMQ_EXCHANGE: "agent-logs"
+      RABBITMQ_ROUTING_PREFIX: "agent"
+      APP_ENV: "dev"
+    volumes:
+        - ./Logs/agent_microservice_template:/src/Logs
+        - /home/aqernt/.aws:/home/aqernt/.aws:ro

@@ -1,0 +1,7 @@
+agentic_os_infra @ git+https://gitlab.corp.amdocs.com/agentic-core/agentic-framework/agent_infra.git@master-26-4
+starlette
+httpx
+colorama
+gradio>=4.44.0
+
+

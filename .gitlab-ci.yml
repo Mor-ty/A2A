@@ -1,0 +1,14 @@
+variables:
+  Python: "true"
+  Linux_Run: "true"
+  Linux_Runner_Tag: "illin4436_runner"
+  Linux_Runner_Path: "/Studioforce/Gitlab_Runner/Jobs"
+  Docker_Name: "agent_template"
+
+  Artifact_Name: "agent-template"
+  Containers_Names: "agent_template"
+
+include:
+  - project: 'aqe-rnd-devops/cicd'
+    ref: "main"
+    file: '.gitlab-ci.yml'
