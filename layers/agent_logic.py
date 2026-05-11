@@ -8,12 +8,14 @@ from a2a.types import TaskArtifactUpdateEvent, TaskStatusUpdateEvent
 from agentic_os_infra.core.layers.agent_logic_base import AgentLogicBase
 
 from layers.lens_graph_visualiser import run_lens_graph_visualiser
+from layers.lens_similarity import run_lens_tc_similarity
 from layers.lens_tc_decompose import run_lens_tc_decompose
 
 logger = logging.getLogger(__name__)
 
 DECOMPOSE_SKILL_ID = "lens_tc_decompose_skill"
 GRAPH_SKILL_ID = "lens_graph_visualiser_skill"
+SIMILARITY_SKILL_ID = "lens_tc_similarity_skill"
 
 
 def _trace_payload(phase: str, **fields: object) -> dict:
@@ -43,8 +45,13 @@ class AgentLogicLayer(AgentLogicBase):
                 yield ev
             return
 
+        if skill_id == SIMILARITY_SKILL_ID:
+            async for ev in run_lens_tc_similarity(self, input_data):
+                yield ev
+            return
+
         yield self.status_response(content=_trace_payload("lens_error", message=f"Unknown skill: {skill_id}"))
         yield self.artifact_response(
-            content=f"Unknown skill. Use `{DECOMPOSE_SKILL_ID}` or `{GRAPH_SKILL_ID}`.",
+            content=f"Unknown skill. Use `{DECOMPOSE_SKILL_ID}`, `{GRAPH_SKILL_ID}`, or `{SIMILARITY_SKILL_ID}`.",
             last_chunk=True,
         )

@@ -35,6 +35,24 @@ APP_CANDIDATES = ("app_id", "appid", "application id", "app id")
 NAME_CANDIDATES = ("tc_name", "test case name", "name", "title")
 
 
+def _chain_agent2_enabled(inputs: dict[str, Any]) -> bool:
+    """Chain to Agent 2 over HTTP A2A unless disabled via env or request inputs."""
+    env = (os.getenv("LENS_CHAIN_AGENT2_VIA_A2A") or "1").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        opt = inputs.get("lens_chain_agent2")
+        if opt is True:
+            return True
+        if isinstance(opt, str) and opt.strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        return False
+    opt = inputs.get("lens_chain_agent2")
+    if opt is False:
+        return False
+    if isinstance(opt, str) and opt.strip().lower() in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
 def _trace(phase: str, **fields: object) -> dict:
     return {"kind": "trace", "phase": phase, **fields}
 
@@ -274,3 +292,59 @@ async def run_lens_tc_decompose(
         Part(root=FilePart(file=file_part)),
     ]
     yield agent.artifact_response_by_parts(parts=parts, last_chunk=True)
+
+    if not _chain_agent2_enabled(inputs):
+        return
+
+    yield agent.status_response(
+        content=_trace(
+            "a2a_handoff",
+            message=(
+                "Forwarding `lens_decomposed_steps.xlsx` to **Agent 2** "
+                "(`lens_graph_visualiser_skill`) over **HTTP A2A** (same Lens URL, new child `context_id`)."
+            ),
+        )
+    )
+    try:
+        from layers.lens_a2a_chain import invoke_agent2_graph_skill_a2a
+
+        trace_md, html_b, g_summ, err = await invoke_agent2_graph_skill_a2a(
+            input_data=input_data,
+            decomposition_excel_bytes=xlsx_bytes,
+            filename="lens_decomposed_steps.xlsx",
+        )
+    except Exception as e:
+        logger.exception("A2A handoff to Agent 2 failed")
+        yield agent.status_response(
+            content=_trace("lens_error", message=f"A2A Agent 2 handoff failed: {e}")
+        )
+        return
+
+    if err:
+        yield agent.status_response(content=_trace("lens_error", message=f"A2A Agent 2: {err}"))
+        if trace_md.strip():
+            cap = 12_000
+            tail = "…\n\n_(trace truncated)_" if len(trace_md) > cap else ""
+            yield agent.status_response(content=f"### Agent 2 A2A trace (partial)\n\n{trace_md[:cap]}{tail}")
+        return
+
+    if trace_md.strip():
+        cap = 10_000
+        tail = "…\n\n_(trace truncated)_" if len(trace_md) > cap else ""
+        yield agent.status_response(content=f"### Agent 2 A2A trace\n\n{trace_md[:cap]}{tail}")
+
+    if html_b:
+        b64h = base64.b64encode(html_b).decode("ascii")
+        parts2 = [
+            Part(root=TextPart(text=f"**Agent 2 (via A2A)**\n\n{g_summ}")),
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=b64h,
+                        mime_type="text/html",
+                        name="lens_flow_graph.html",
+                    )
+                )
+            ),
+        ]
+        yield agent.artifact_response_by_parts(parts=parts2, last_chunk=True)

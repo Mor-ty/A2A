@@ -26,7 +26,8 @@ public_agent_card = AgentCard(
     name="Lens",
     description=(
         "Lens automation suite — (1) decomposes Excel test specs into state steps, "
-        "(2) builds deduplicated layered flow graphs as interactive HTML."
+        "(2) builds deduplicated layered flow graphs as interactive HTML, "
+        "(3) n×n cosine similarity matrices between test cases from state chains."
     ),
     url=f"http://{server}:{port}/",
     version="2026.5",
@@ -76,6 +77,20 @@ public_agent_card = AgentCard(
             ),
             tags=["lens", "graph", "visualisation", "deduplication", "flow"],
             examples=["Upload lens_decomposed_steps.xlsx from Agent 1 and generate the graph."],
+            input_modes=["text", "data", "file"],
+            output_modes=["text", "file", "data"],
+        ),
+        AgentSkill(
+            id="lens_tc_similarity_skill",
+            name="TC similarity (Agent 3)",
+            description=(
+                "Builds an n×n cosine-similarity matrix between test cases from their connected states. "
+                "Primary input: the same decomposition Excel used with the graph skill. "
+                "Optional: Lens Agent 2 graph HTML (state labels recovered from node tooltips). "
+                "TF–IDF vectorisation; diagonal forced to 1; lists pairs scoring at or above a threshold (default 0.8)."
+            ),
+            tags=["lens", "similarity", "embeddings", "cosine", "matrix", "excel"],
+            examples=["Upload lens_decomposed_steps.xlsx and request similarity_matrix.xlsx."],
             input_modes=["text", "data", "file"],
             output_modes=["text", "file", "data"],
         ),
@@ -138,6 +153,50 @@ skill_input_enrichments = {
             ),
         ]
     ),
+    "lens_tc_similarity_skill": SkillInputEnrichment(
+        parameters=[
+            SkillInputParameter(
+                name="chatInput",
+                display_name="Intent",
+                data_type=DataType.STRING,
+                description="Short description for guardrails.",
+                required=False,
+                sample="Cosine similarity matrix between test cases from state chains.",
+                default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="decomposition_workbook",
+                display_name="Decomposition Excel (preferred)",
+                data_type=DataType.FILE,
+                description="Agent 1 step table: tc_id, step, initial_state, final_state (same file as Agent 2 input).",
+                required=False,
+                sample="lens_decomposed_steps.xlsx",
+                default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="graph_html",
+                display_name="Agent 2 graph HTML (optional)",
+                data_type=DataType.FILE,
+                description="Lens flow graph HTML; per-TC states inferred from vis-network node tooltips when Excel is absent.",
+                required=False,
+                sample="lens_flow_graph.html",
+                default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="similarity_threshold",
+                display_name="Pair-report threshold",
+                data_type=DataType.NUMBER,
+                description="Pairs with cosine similarity ≥ this value are listed (default 0.8).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
+        ]
+    ),
 }
 
 skill_output_enrichments = {
@@ -177,6 +236,24 @@ skill_output_enrichments = {
             ),
         ]
     ),
+    "lens_tc_similarity_skill": SkillOutputEnrichment(
+        outputs=[
+            SkillOutputParameter(
+                name="summary",
+                data_type=DataType.STRING,
+                description="Markdown summary: n, pair count above threshold, method.",
+                required=True,
+                sample="n=12; 5 pairs ≥ 0.8.",
+            ),
+            SkillOutputParameter(
+                name="similarity_matrix_xlsx",
+                data_type=DataType.FILE,
+                description="Excel: sheet similarity_matrix (n×n), sheet pairs_ge_threshold.",
+                required=True,
+                sample="lens_tc_similarity_matrix.xlsx",
+            ),
+        ]
+    ),
 }
 
 extended_agent_card = ExtendedAgentCard.model_validate(public_agent_card.model_dump())
@@ -201,6 +278,8 @@ extended_agent_card = extended_agent_card.model_copy(
             "**Agent 2 (graph):** When asked for synonym pairs, output only JSON "
             '`{"equivalent_pairs":[{"a":"...","b":"..."}]}` — merge only undeniable duplicate states; '
             "when in doubt omit pairs.\n"
+            "**Agent 3 (similarity):** No LLM JSON — server builds TF–IDF vectors per test case from state chains "
+            "and returns cosine-similarity matrix (diagonal 1).\n"
         ),
         "skill_input_enrichments": skill_input_enrichments,
         "skill_output_enrichments": skill_output_enrichments,
