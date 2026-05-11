@@ -27,7 +27,8 @@ public_agent_card = AgentCard(
     description=(
         "Lens automation suite — (1) decomposes Excel test specs into state steps, "
         "(2) builds deduplicated layered flow graphs as interactive HTML, "
-        "(3) n×n cosine similarity matrices between test cases from state chains."
+        "(3) n×n cosine similarity matrices from state chains, "
+        "(4) disjoint-set clustering from those matrices (sim > τ)."
     ),
     url=f"http://{server}:{port}/",
     version="2026.5",
@@ -73,7 +74,8 @@ public_agent_card = AgentCard(
             description=(
                 "Consumes Agent 1 decomposition Excel (initial_state / final_state rows). "
                 "Merges near-duplicate states conservatively, assigns depth-based layers, "
-                "and returns an interactive vis-network HTML graph across all test cases."
+                "and returns an interactive vis-network HTML graph across all test cases. "
+                "Optionally chains to Agents 3–4 over A2A (similarity matrix then clusters)."
             ),
             tags=["lens", "graph", "visualisation", "deduplication", "flow"],
             examples=["Upload lens_decomposed_steps.xlsx from Agent 1 and generate the graph."],
@@ -85,12 +87,25 @@ public_agent_card = AgentCard(
             name="TC similarity (Agent 3)",
             description=(
                 "Builds an n×n cosine-similarity matrix between test cases from their connected states. "
-                "Primary input: the same decomposition Excel used with the graph skill. "
-                "Optional: Lens Agent 2 graph HTML (state labels recovered from node tooltips). "
-                "TF–IDF vectorisation; diagonal forced to 1; lists pairs scoring at or above a threshold (default 0.8)."
+                "**Automated A2A pipeline:** consumes the **Agent 1 decomposition Excel** only (state chains). "
+                "Optional extra: Agent 2 graph HTML for Tab 3 manual enrich only. "
+                "TF–IDF vectorisation; diagonal forced to 1; thresholded pair list (default 0.8). "
+                "May chain Agent 4 over A2A for clustering."
             ),
             tags=["lens", "similarity", "embeddings", "cosine", "matrix", "excel"],
             examples=["Upload lens_decomposed_steps.xlsx and request similarity_matrix.xlsx."],
+            input_modes=["text", "data", "file"],
+            output_modes=["text", "file", "data"],
+        ),
+        AgentSkill(
+            id="lens_tc_cluster_skill",
+            name="TC clustering (Agent 4)",
+            description=(
+                "Reads the Agent 3 similarity-matrix workbook and merges test cases into disjoint groups: "
+                "union TC_i and TC_j when sim(i,j) > τ (strict). Outputs per-TC cluster_id and summary sheet."
+            ),
+            tags=["lens", "clustering", "union-find", "similarity"],
+            examples=["Upload lens_tc_similarity_matrix.xlsx from Agent 3 with τ = 0.8."],
             input_modes=["text", "data", "file"],
             output_modes=["text", "file", "data"],
         ),
@@ -127,6 +142,56 @@ skill_input_enrichments = {
                 default_value=None,
                 source_priority=[DataSource.USER],
             ),
+            SkillInputParameter(
+                name="lens_chain_agent2",
+                display_name="Chain Agent 2 after decomposition",
+                data_type=DataType.BOOL,
+                description="When true, forwards decomposition workbook to lens_graph_visualiser_skill over HTTP A2A.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="lens_chain_agent3",
+                display_name="Chain Agent 3 (similarity)",
+                data_type=DataType.BOOL,
+                description="After Agent 2 graph: A2A to similarity using Agent 1 workbook only. If Agent 2 is off: A2A to similarity directly.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="similarity_threshold",
+                display_name="Similarity pair threshold (chain)",
+                data_type=DataType.NUMBER,
+                description="Similarity pair threshold for chained Agent 3 (with or without Agent 2; default 0.8).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="lens_chain_agent4",
+                display_name="Chain Agent 4 after similarity",
+                data_type=DataType.BOOL,
+                description="Passed through so chained Agent 3 runs lens_tc_cluster_skill over A2A on the matrix.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="cluster_threshold",
+                display_name="Cluster merge threshold τ",
+                data_type=DataType.NUMBER,
+                description="Agent 4 merges TCs when sim > τ (default: same as similarity_threshold).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
         ]
     ),
     "lens_graph_visualiser_skill": SkillInputEnrichment(
@@ -149,6 +214,46 @@ skill_input_enrichments = {
                 required=True,
                 sample="lens_decomposed_steps.xlsx",
                 default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="lens_chain_agent3",
+                display_name="Chain Agent 3 after graph",
+                data_type=DataType.BOOL,
+                description="When true, runs lens_tc_similarity_skill over HTTP A2A using **Agent 1 decomposition workbook** only.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="similarity_threshold",
+                display_name="Similarity pair threshold",
+                data_type=DataType.NUMBER,
+                description="Pairs with cosine similarity ≥ this value appear in pairs_ge_threshold (default 0.8).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="lens_chain_agent4",
+                display_name="Chain Agent 4 after similarity",
+                data_type=DataType.BOOL,
+                description="When true, chained Agent 3 forwards the matrix to lens_tc_cluster_skill over A2A.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="cluster_threshold",
+                display_name="Cluster merge threshold τ",
+                data_type=DataType.NUMBER,
+                description="Agent 4: union TCs when sim > τ (defaults to similarity_threshold).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
                 source_priority=[DataSource.USER],
             ),
         ]
@@ -195,6 +300,60 @@ skill_input_enrichments = {
                 default_value=0.8,
                 source_priority=[DataSource.USER],
             ),
+            SkillInputParameter(
+                name="lens_chain_agent4",
+                display_name="Chain Agent 4 after matrix",
+                data_type=DataType.BOOL,
+                description="When true, runs lens_tc_cluster_skill over HTTP A2A on this skill’s matrix output.",
+                required=False,
+                sample=True,
+                default_value=True,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="cluster_threshold",
+                display_name="Cluster merge threshold τ",
+                data_type=DataType.NUMBER,
+                description="Merge TCs when sim > τ (default: similarity_threshold).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
+        ]
+    ),
+    "lens_tc_cluster_skill": SkillInputEnrichment(
+        parameters=[
+            SkillInputParameter(
+                name="chatInput",
+                display_name="Intent",
+                data_type=DataType.STRING,
+                description="Short description for guardrails.",
+                required=False,
+                sample="Cluster test cases from similarity matrix.",
+                default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="similarity_matrix_workbook",
+                display_name="Similarity matrix (.xlsx from Agent 3)",
+                data_type=DataType.FILE,
+                description="Workbook with sheet similarity_matrix (tc_ids as index/columns).",
+                required=True,
+                sample="lens_tc_similarity_matrix.xlsx",
+                default_value=None,
+                source_priority=[DataSource.USER],
+            ),
+            SkillInputParameter(
+                name="cluster_threshold",
+                display_name="Merge threshold τ",
+                data_type=DataType.NUMBER,
+                description="Union TC_i and TC_j when sim(i,j) > τ (strict).",
+                required=False,
+                sample=0.8,
+                default_value=0.8,
+                source_priority=[DataSource.USER],
+            ),
         ]
     ),
 }
@@ -216,6 +375,27 @@ skill_output_enrichments = {
                 required=True,
                 sample="lens_decomposed_steps.xlsx",
             ),
+            SkillOutputParameter(
+                name="flow_graph_html_chained",
+                data_type=DataType.FILE,
+                description="Optional: HTML from Agent 2 when lens_chain_agent2 is enabled.",
+                required=False,
+                sample="lens_flow_graph.html",
+            ),
+            SkillOutputParameter(
+                name="similarity_matrix_xlsx_chained",
+                data_type=DataType.FILE,
+                description="Optional: similarity workbook when chained Agent 2→3 succeeds.",
+                required=False,
+                sample="lens_tc_similarity_matrix.xlsx",
+            ),
+            SkillOutputParameter(
+                name="clusters_xlsx_chained",
+                data_type=DataType.FILE,
+                description="Optional: Agent 4 clusters when chained Agent 3→4 succeeds.",
+                required=False,
+                sample="lens_tc_clusters.xlsx",
+            ),
         ]
     ),
     "lens_graph_visualiser_skill": SkillOutputEnrichment(
@@ -234,6 +414,20 @@ skill_output_enrichments = {
                 required=True,
                 sample="lens_flow_graph.html",
             ),
+            SkillOutputParameter(
+                name="similarity_matrix_xlsx",
+                data_type=DataType.FILE,
+                description="Present when lens_chain_agent3 is enabled: n×n cosine matrix from chained Agent 3.",
+                required=False,
+                sample="lens_tc_similarity_matrix.xlsx",
+            ),
+            SkillOutputParameter(
+                name="clusters_xlsx",
+                data_type=DataType.FILE,
+                description="Present when lens_chain_agent4 is enabled: cluster assignments from chained Agent 4.",
+                required=False,
+                sample="lens_tc_clusters.xlsx",
+            ),
         ]
     ),
     "lens_tc_similarity_skill": SkillOutputEnrichment(
@@ -251,6 +445,31 @@ skill_output_enrichments = {
                 description="Excel: sheet similarity_matrix (n×n), sheet pairs_ge_threshold.",
                 required=True,
                 sample="lens_tc_similarity_matrix.xlsx",
+            ),
+            SkillOutputParameter(
+                name="clusters_xlsx",
+                data_type=DataType.FILE,
+                description="Optional: Agent 4 output when lens_chain_agent4 is enabled.",
+                required=False,
+                sample="lens_tc_clusters.xlsx",
+            ),
+        ]
+    ),
+    "lens_tc_cluster_skill": SkillOutputEnrichment(
+        outputs=[
+            SkillOutputParameter(
+                name="summary",
+                data_type=DataType.STRING,
+                description="Markdown: n, K clusters, effectiveness snapshot.",
+                required=True,
+                sample="n=10 → 4 clusters (sim > 0.8).",
+            ),
+            SkillOutputParameter(
+                name="clusters_xlsx",
+                data_type=DataType.FILE,
+                description="cluster_assignments + cluster_summary sheets.",
+                required=True,
+                sample="lens_tc_clusters.xlsx",
             ),
         ]
     ),
@@ -280,6 +499,7 @@ extended_agent_card = extended_agent_card.model_copy(
             "when in doubt omit pairs.\n"
             "**Agent 3 (similarity):** No LLM JSON — server builds TF–IDF vectors per test case from state chains "
             "and returns cosine-similarity matrix (diagonal 1).\n"
+            "**Agent 4 (cluster):** No LLM — server unions TC pairs with sim(i,j) > τ (disjoint sets); outputs cluster assignments.\n"
         ),
         "skill_input_enrichments": skill_input_enrichments,
         "skill_output_enrichments": skill_output_enrichments,

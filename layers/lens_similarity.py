@@ -21,6 +21,9 @@ from a2a.types import FilePart, FileWithBytes, Part, TaskArtifactUpdateEvent, Ta
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
+from layers.lens_cluster import maybe_chain_agent4_after_similarity
+from layers.lens_similarity_metrics import effectiveness_markdown, effectiveness_metrics
+
 if TYPE_CHECKING:
     from agentic_os_infra.core.layers.agent_logic_base import AgentLogicBase
 
@@ -291,6 +294,9 @@ async def run_lens_tc_similarity(
         )
         return
 
+    eff = effectiveness_metrics(ids, sim, threshold, strict_gt=True)
+    yield agent.status_response(content=_trace("lens_effectiveness", **eff))
+
     mat_df = pd.DataFrame(sim, index=ids, columns=ids)
     pairs_df = _pairs_above_threshold(ids, sim, threshold)
 
@@ -308,7 +314,8 @@ async def run_lens_tc_similarity(
         f"- Diagonal: **1.0** (self-similarity)\n"
         f"- Threshold for `pairs_ge_threshold` sheet: **≥ {threshold:.2f}** → **{len(pairs_df)}** pair(s)\n"
         f"- Input source: `{source or 'excel'}`\n\n"
-        "Sheets: `similarity_matrix` (n×n), `pairs_ge_threshold` (tc_id_a, tc_id_b, cosine_similarity)."
+        "Sheets: `similarity_matrix` (n×n), `pairs_ge_threshold` (tc_id_a, tc_id_b, cosine_similarity).\n\n"
+        + effectiveness_markdown(eff)
     )
 
     parts = [
@@ -324,3 +331,12 @@ async def run_lens_tc_similarity(
         ),
     ]
     yield agent.artifact_response_by_parts(parts=parts, last_chunk=True)
+
+    async for ev in maybe_chain_agent4_after_similarity(
+        agent,
+        input_data,
+        similarity_inputs=inputs,
+        similarity_xlsx_bytes=out_bytes,
+        similarity_threshold=threshold,
+    ):
+        yield ev

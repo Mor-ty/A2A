@@ -17,6 +17,8 @@ import pandas as pd
 from rapidfuzz import fuzz
 from a2a.types import FilePart, FileWithBytes, Part, TaskArtifactUpdateEvent, TaskStatusUpdateEvent, TextPart
 
+from layers.lens_similarity import DEFAULT_THRESHOLD as SIM_DEFAULT_THRESHOLD
+
 if TYPE_CHECKING:
     from agentic_os_infra.core.layers.agent_logic_base import AgentLogicBase
 
@@ -39,6 +41,33 @@ MAX_LAYERS = 8
 
 def _trace(phase: str, **fields: object) -> dict:
     return {"kind": "trace", "phase": phase, **fields}
+
+
+def _chain_agent3_enabled(inputs: dict[str, Any]) -> bool:
+    """Chain to Agent 3 over HTTP A2A after graph HTML unless disabled."""
+    env = (os.getenv("LENS_CHAIN_AGENT3_VIA_A2A") or "1").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        opt = inputs.get("lens_chain_agent3")
+        if opt is True:
+            return True
+        if isinstance(opt, str) and opt.strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        return False
+    opt = inputs.get("lens_chain_agent3")
+    if opt is False:
+        return False
+    if isinstance(opt, str) and opt.strip().lower() in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _similarity_threshold_from_inputs(inputs: dict[str, Any]) -> float:
+    raw = inputs.get("similarity_threshold")
+    try:
+        v = float(raw) if raw is not None else SIM_DEFAULT_THRESHOLD
+    except (TypeError, ValueError):
+        v = SIM_DEFAULT_THRESHOLD
+    return max(0.0, min(1.0, v))
 
 
 def _norm(s: str) -> str:
@@ -456,3 +485,87 @@ async def run_lens_graph_visualiser(
         ),
     ]
     yield agent.artifact_response_by_parts(parts=parts, last_chunk=True)
+
+    if not _chain_agent3_enabled(inputs):
+        return
+
+    thr = _similarity_threshold_from_inputs(inputs)
+    yield agent.status_response(
+        content=_trace(
+            "a2a_handoff_agent3",
+            message=(
+                "Forwarding **Agent 1 decomposition workbook** (`decomposition_workbook`, same bytes as graph input) "
+                f"to **Agent 3** (`lens_tc_similarity_skill`, threshold **{thr:.2f}**) over **HTTP A2A** "
+                "(new child `context_id`). Graph HTML is not required for similarity."
+            ),
+        )
+    )
+    try:
+        from layers.lens_a2a_chain import invoke_agent3_similarity_skill_a2a
+
+        trace_md, sim_b, cluster_b, s_summ, err = await invoke_agent3_similarity_skill_a2a(
+            input_data=input_data,
+            decomposition_xlsx_bytes=raw_bytes,
+            decomposition_filename=fname,
+            similarity_threshold=thr,
+        )
+    except Exception as e:
+        logger.exception("A2A handoff to Agent 3 failed")
+        yield agent.status_response(
+            content=_trace("lens_error", message=f"A2A Agent 3 handoff failed: {e}")
+        )
+        return
+
+    if err:
+        yield agent.status_response(content=_trace("lens_error", message=f"A2A Agent 3: {err}"))
+        if trace_md.strip():
+            cap = 12_000
+            tail = "…\n\n_(trace truncated)_" if len(trace_md) > cap else ""
+            yield agent.status_response(content=f"### Agent 3 A2A trace (partial)\n\n{trace_md[:cap]}{tail}")
+        return
+
+    if trace_md.strip():
+        cap = 10_000
+        tail = "…\n\n_(trace truncated)_" if len(trace_md) > cap else ""
+        yield agent.status_response(content=f"### Agent 3 A2A trace\n\n{trace_md[:cap]}{tail}")
+
+    if sim_b:
+        b64s = base64.b64encode(sim_b).decode("ascii")
+        parts3 = [
+            Part(
+                root=TextPart(
+                    text=(
+                        f"**Agent 3 (via A2A)** — similarity from **Agent 1** decomposition workbook "
+                        f"(same input as this graph run).\n\n{s_summ}"
+                    )
+                )
+            ),
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=b64s,
+                        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        name="lens_tc_similarity_matrix.xlsx",
+                    )
+                )
+            ),
+        ]
+        yield agent.artifact_response_by_parts(parts=parts3, last_chunk=True)
+
+    if cluster_b:
+        b64c = base64.b64encode(cluster_b).decode("ascii")
+        yield agent.artifact_response_by_parts(
+            parts=[
+                Part(root=TextPart(text="**Agent 4 (via A2A)** — clusters from similarity matrix.")),
+                Part(
+                    root=FilePart(
+                        file=FileWithBytes(
+                            bytes=b64c,
+                            mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            name="lens_tc_clusters.xlsx",
+                        )
+                    )
+                ),
+            ],
+            last_chunk=True,
+        )

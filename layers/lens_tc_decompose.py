@@ -294,6 +294,83 @@ async def run_lens_tc_decompose(
     yield agent.artifact_response_by_parts(parts=parts, last_chunk=True)
 
     if not _chain_agent2_enabled(inputs):
+        from layers.lens_graph_visualiser import _chain_agent3_enabled, _similarity_threshold_from_inputs
+
+        if _chain_agent3_enabled(inputs):
+            thr = _similarity_threshold_from_inputs(inputs)
+            yield agent.status_response(
+                content=_trace(
+                    "a2a_handoff_agent3",
+                    message=(
+                        "Agent 2 skipped; forwarding **Agent 1 decomposition workbook** to **Agent 3** "
+                        f"(`lens_tc_similarity_skill`, threshold **{thr:.2f}**) over **HTTP A2A**."
+                    ),
+                )
+            )
+            try:
+                from layers.lens_a2a_chain import invoke_agent3_similarity_skill_a2a
+
+                t3, sim_only, cluster_only, s_summ, err3 = await invoke_agent3_similarity_skill_a2a(
+                    input_data=input_data,
+                    decomposition_xlsx_bytes=xlsx_bytes,
+                    decomposition_filename="lens_decomposed_steps.xlsx",
+                    similarity_threshold=thr,
+                )
+            except Exception as e:
+                logger.exception("A2A handoff to Agent 3 failed")
+                yield agent.status_response(
+                    content=_trace("lens_error", message=f"A2A Agent 3 handoff failed: {e}")
+                )
+                return
+
+            if err3:
+                yield agent.status_response(content=_trace("lens_error", message=f"A2A Agent 3: {err3}"))
+                if t3.strip():
+                    cap = 12_000
+                    tail = "…\n\n_(trace truncated)_" if len(t3) > cap else ""
+                    yield agent.status_response(content=f"### Agent 3 A2A trace (partial)\n\n{t3[:cap]}{tail}")
+                return
+
+            if t3.strip():
+                cap = 10_000
+                tail = "…\n\n_(trace truncated)_" if len(t3) > cap else ""
+                yield agent.status_response(content=f"### Agent 3 A2A trace\n\n{t3[:cap]}{tail}")
+
+            if sim_only:
+                b64z = base64.b64encode(sim_only).decode("ascii")
+                yield agent.artifact_response_by_parts(
+                    parts=[
+                        Part(root=TextPart(text=f"**Agent 3 (via A2A)**\n\n{s_summ}")),
+                        Part(
+                            root=FilePart(
+                                file=FileWithBytes(
+                                    bytes=b64z,
+                                    mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    name="lens_tc_similarity_matrix.xlsx",
+                                )
+                            )
+                        ),
+                    ],
+                    last_chunk=True,
+                )
+
+            if cluster_only:
+                b64c = base64.b64encode(cluster_only).decode("ascii")
+                yield agent.artifact_response_by_parts(
+                    parts=[
+                        Part(root=TextPart(text="**Agent 4 (via A2A)** — clusters from similarity matrix.")),
+                        Part(
+                            root=FilePart(
+                                file=FileWithBytes(
+                                    bytes=b64c,
+                                    mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    name="lens_tc_clusters.xlsx",
+                                )
+                            )
+                        ),
+                    ],
+                    last_chunk=True,
+                )
         return
 
     yield agent.status_response(
@@ -308,7 +385,7 @@ async def run_lens_tc_decompose(
     try:
         from layers.lens_a2a_chain import invoke_agent2_graph_skill_a2a
 
-        trace_md, html_b, g_summ, err = await invoke_agent2_graph_skill_a2a(
+        trace_md, html_b, sim_xlsx_b, cluster_xlsx_b, g_summ, err = await invoke_agent2_graph_skill_a2a(
             input_data=input_data,
             decomposition_excel_bytes=xlsx_bytes,
             filename="lens_decomposed_steps.xlsx",
@@ -348,3 +425,44 @@ async def run_lens_tc_decompose(
             ),
         ]
         yield agent.artifact_response_by_parts(parts=parts2, last_chunk=True)
+
+    if sim_xlsx_b:
+        b64s = base64.b64encode(sim_xlsx_b).decode("ascii")
+        parts3 = [
+            Part(
+                root=TextPart(
+                    text=(
+                        "**Agent 3 (via A2A, after Agent 2)** — similarity matrix from **Agent 1** "
+                        "decomposition workbook (TF–IDF / cosine)."
+                    )
+                )
+            ),
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=b64s,
+                        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        name="lens_tc_similarity_matrix.xlsx",
+                    )
+                )
+            ),
+        ]
+        yield agent.artifact_response_by_parts(parts=parts3, last_chunk=True)
+
+    if cluster_xlsx_b:
+        b64c = base64.b64encode(cluster_xlsx_b).decode("ascii")
+        yield agent.artifact_response_by_parts(
+            parts=[
+                Part(root=TextPart(text="**Agent 4 (via A2A)** — clusters from chained similarity matrix.")),
+                Part(
+                    root=FilePart(
+                        file=FileWithBytes(
+                            bytes=b64c,
+                            mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            name="lens_tc_clusters.xlsx",
+                        )
+                    )
+                ),
+            ],
+            last_chunk=True,
+        )
